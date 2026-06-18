@@ -159,6 +159,8 @@
 	</properties>
 
 	<modules>
+		<module>registration-launcher-common</module>
+		<module>registration-launcher</module>
 		<module>registration-api</module>
 		<module>registration-api-stub-impl</module>
 		<module>registration-services</module>

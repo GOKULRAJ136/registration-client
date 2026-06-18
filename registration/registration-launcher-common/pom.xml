@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>io.mosip.registration</groupId>
+		<artifactId>registration-client-parent</artifactId>
+		<version>1.2.1-SNAPSHOT</version>
+	</parent>
+
+	<artifactId>registration-launcher-common</artifactId>
+	<version>1.2.1-SNAPSHOT</version>
+
+	<name>Registration Launcher Common</name>
+	<description>Java 11 shared primitives used by both registration-launcher (Java 11) and registration-services (Java 21). Must not depend on registration-client/registration-services.</description>
+	<url>https://github.com/mosip/registration-client</url>
+
+	<!--
+	  Compiled with release 11 so the artifacts are safe to load under the Java 11 JRE
+	  that _launcher.jar runs on during the Java 11 -> 21 migration. Keep dependencies to
+	  slf4j + JDK only; never add client/services jars here.
+	-->
+	<properties>
+		<maven.compiler.source>11</maven.compiler.source>
+		<maven.compiler.target>11</maven.compiler.target>
+	</properties>
+
+	<dependencies>
+		<dependency>
+			<groupId>org.slf4j</groupId>
+			<artifactId>slf4j-api</artifactId>
+			<version>1.7.19</version>
+			<scope>compile</scope>
+		</dependency>
+		<dependency>
+			<groupId>junit</groupId>
+			<artifactId>junit</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<configuration combine.self="override">
+					<release>11</release>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+
+	<scm>
+		<connection>scm:git:git://github.com/mosip/registration-client.git</connection>
+		<developerConnection>scm:git:ssh://github.com:mosip/registration-client.git</developerConnection>
+		<url>https://github.com/mosip/registration-client</url>
+		<tag>HEAD</tag>
+	</scm>
+	<licenses>
+		<license>
+			<name>MPL 2.0</name>
+			<url>https://www.mozilla.org/en-US/MPL/2.0/</url>
+		</license>
+	</licenses>
+	<developers>
+		<developer>
+			<name>Mosip</name>
+			<email>mosip.emailnotifier@gmail.com</email>
+			<organization>io.mosip</organization>
+			<organizationUrl>https://github.com/mosip/registration-client</organizationUrl>
+		</developer>
+	</developers>
+</project>

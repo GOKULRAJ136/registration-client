@@ -1,13 +1,17 @@
 package io.mosip.registration.test.update;
 
+import com.sun.net.httpserver.HttpServer;
 import io.mosip.registration.exception.RegBaseCheckedException;
 import io.mosip.registration.update.SoftwareUpdateUtil;
 import org.junit.*;
 import org.mockito.InjectMocks;
 
 import java.io.*;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.Arrays;
+import java.util.Random;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 
@@ -138,4 +142,163 @@ public class SoftwareUpdateUtilTest extends SoftwareUpdateUtil {
 
         assertFalse(temp.exists());
     }
+
+    // ---------------------------------------------------------------------
+    // downloadResumable(...) + ensureSpace(...) tests
+    // ---------------------------------------------------------------------
+
+    @Test
+    public void downloadResumable_fullDownload_success() throws Exception {
+        byte[] payload = randomPayload(2000);
+        HttpServer server = startServer(payload, true);
+        File dir = Files.createTempDirectory("dl").toFile();
+        try {
+            downloadResumable(urlFor(server), dir.getAbsolutePath(), "artifact.bin");
+
+            File out = new File(dir, "artifact.bin");
+            assertTrue(out.exists());
+            assertArrayEquals(payload, Files.readAllBytes(out.toPath()));
+            assertFalse(new File(dir, "artifact.bin.part").exists());
+        } finally {
+            server.stop(0);
+            deleteDir(dir);
+        }
+    }
+
+    @Test
+    public void downloadResumable_resumesFromPartial() throws Exception {
+        byte[] payload = randomPayload(2000);
+        HttpServer server = startServer(payload, true);
+        File dir = Files.createTempDirectory("dl").toFile();
+        try {
+            // pre-stage the first 800 bytes as an interrupted .part
+            Files.write(new File(dir, "artifact.bin.part").toPath(), Arrays.copyOf(payload, 800));
+
+            downloadResumable(urlFor(server), dir.getAbsolutePath(), "artifact.bin");
+
+            assertArrayEquals(payload, Files.readAllBytes(new File(dir, "artifact.bin").toPath()));
+        } finally {
+            server.stop(0);
+            deleteDir(dir);
+        }
+    }
+
+    @Test
+    public void downloadResumable_serverIgnoresRange_restartsFromZero() throws Exception {
+        byte[] payload = randomPayload(2000);
+        HttpServer server = startServer(payload, false); // always 200, ignores Range
+        File dir = Files.createTempDirectory("dl").toFile();
+        try {
+            // stale partial with wrong content; must be discarded, not appended to
+            Files.write(new File(dir, "artifact.bin.part").toPath(), new byte[1500]);
+
+            downloadResumable(urlFor(server), dir.getAbsolutePath(), "artifact.bin");
+
+            assertArrayEquals(payload, Files.readAllBytes(new File(dir, "artifact.bin").toPath()));
+        } finally {
+            server.stop(0);
+            deleteDir(dir);
+        }
+    }
+
+    @Test
+    public void downloadResumable_rangeNotSatisfiable_finalizesExistingPart() throws Exception {
+        byte[] payload = randomPayload(2000);
+        HttpServer server = startServer(payload, true);
+        File dir = Files.createTempDirectory("dl").toFile();
+        try {
+            // part is already complete -> Range start == length -> server returns 416
+            File part = new File(dir, "artifact.bin.part");
+            Files.write(part.toPath(), payload);
+
+            downloadResumable(urlFor(server), dir.getAbsolutePath(), "artifact.bin");
+
+            assertArrayEquals(payload, Files.readAllBytes(new File(dir, "artifact.bin").toPath()));
+            assertFalse(part.exists());
+        } finally {
+            server.stop(0);
+            deleteDir(dir);
+        }
+    }
+
+    @Test(expected = RegBaseCheckedException.class)
+    public void downloadResumable_invalidHost_throws() throws Exception {
+        downloadResumable("http://invalid.invalid/file", TEMP_DIR.getAbsolutePath(), "x.bin");
+    }
+
+    @Test(expected = RegBaseCheckedException.class)
+    public void downloadResumable_unexpectedStatus_throws() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/file", exchange -> {
+            exchange.sendResponseHeaders(404, -1);
+            exchange.close();
+        });
+        server.start();
+        File dir = Files.createTempDirectory("dl").toFile();
+        try {
+            downloadResumable(urlFor(server), dir.getAbsolutePath(), "x.bin");
+        } finally {
+            server.stop(0);
+            deleteDir(dir);
+        }
+    }
+
+    @Test
+    public void ensureSpace_sufficient_noException() throws Exception {
+        ensureSpace(TEMP_DIR, 1L);
+    }
+
+    @Test(expected = RegBaseCheckedException.class)
+    public void ensureSpace_insufficient_throws() throws Exception {
+        ensureSpace(TEMP_DIR, Long.MAX_VALUE);
+    }
+
+    @Test
+    public void ensureSpace_nullDir_usesCurrentDir_noException() throws Exception {
+        ensureSpace(null, 1L);
+    }
+
+    // ---- helpers ----
+
+    private static byte[] randomPayload(int size) {
+        byte[] bytes = new byte[size];
+        new Random(42).nextBytes(bytes);
+        return bytes;
+    }
+
+    private static HttpServer startServer(byte[] payload, boolean honorRange) throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/file", exchange -> {
+            String range = exchange.getRequestHeaders().getFirst("Range");
+            if (honorRange && range != null && range.startsWith("bytes=")) {
+                long start = Long.parseLong(range.substring("bytes=".length()).split("-")[0]);
+                if (start >= payload.length) {
+                    exchange.sendResponseHeaders(HTTP_RANGE_NOT_SATISFIABLE_TEST, -1);
+                    exchange.close();
+                    return;
+                }
+                int len = (int) (payload.length - start);
+                exchange.getResponseHeaders().add("Content-Range",
+                        "bytes " + start + "-" + (payload.length - 1) + "/" + payload.length);
+                exchange.sendResponseHeaders(206, len);
+                try (OutputStream os = exchange.getResponseBody()) {
+                    os.write(payload, (int) start, len);
+                }
+            } else {
+                exchange.sendResponseHeaders(200, payload.length);
+                try (OutputStream os = exchange.getResponseBody()) {
+                    os.write(payload);
+                }
+            }
+            exchange.close();
+        });
+        server.start();
+        return server;
+    }
+
+    private static String urlFor(HttpServer server) {
+        return "http://localhost:" + server.getAddress().getPort() + "/file";
+    }
+
+    private static final int HTTP_RANGE_NOT_SATISFIABLE_TEST = 416;
 }
