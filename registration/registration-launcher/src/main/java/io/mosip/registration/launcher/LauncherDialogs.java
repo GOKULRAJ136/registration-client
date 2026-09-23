@@ -5,8 +5,7 @@
  */
 package io.mosip.registration.launcher;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import io.mosip.registration.launcher.common.LauncherLog;
 
 import javax.swing.BorderFactory;
 import javax.swing.JDialog;
@@ -27,7 +26,7 @@ import java.awt.GraphicsEnvironment;
  */
 public final class LauncherDialogs {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(LauncherDialogs.class);
+    private static final LauncherLog LOGGER = LauncherLog.get(LauncherDialogs.class);
     private static final String TITLE = "Registration Client";
 
     /**

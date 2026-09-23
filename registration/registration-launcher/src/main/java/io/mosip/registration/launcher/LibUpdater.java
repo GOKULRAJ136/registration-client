@@ -6,12 +6,11 @@
 package io.mosip.registration.launcher;
 
 import io.mosip.registration.launcher.common.DownloadProgressListener;
+import io.mosip.registration.launcher.common.LauncherLog;
 import io.mosip.registration.launcher.common.ManifestVerifier;
 import io.mosip.registration.launcher.common.ResumableDownloader;
 import io.mosip.registration.launcher.common.SignatureVerifier;
 import io.mosip.registration.launcher.common.ZipExtractor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -49,7 +48,7 @@ import java.util.jar.Manifest;
  */
 public final class LibUpdater {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(LibUpdater.class);
+    private static final LauncherLog LOGGER = LauncherLog.get(LibUpdater.class);
     private static final String MANIFEST = "MANIFEST.MF";
     private static final String MANIFEST_SIG = "MANIFEST.MF.sig";
     private static final String LIB_ZIP = "lib.zip";
