@@ -23,12 +23,8 @@
 	</properties>
 
 	<dependencies>
-		<dependency>
-			<groupId>org.slf4j</groupId>
-			<artifactId>slf4j-api</artifactId>
-			<version>1.7.19</version>
-			<scope>compile</scope>
-		</dependency>
+		<!-- No compile-scope dependencies on purpose: _launcher.jar must run as the sole entry point
+		     with nothing else on the classpath, so it logs via java.util.logging (LauncherLog). -->
 		<dependency>
 			<groupId>junit</groupId>
 			<artifactId>junit</artifactId>

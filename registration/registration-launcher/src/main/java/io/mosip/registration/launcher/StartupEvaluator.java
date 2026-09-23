@@ -5,10 +5,9 @@
  */
 package io.mosip.registration.launcher;
 
+import io.mosip.registration.launcher.common.LauncherLog;
 import io.mosip.registration.launcher.common.ManifestVerifier;
 import io.mosip.registration.launcher.common.SignatureVerifier;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -25,7 +24,7 @@ import java.util.jar.Manifest;
  */
 public final class StartupEvaluator {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(StartupEvaluator.class);
+    private static final LauncherLog LOGGER = LauncherLog.get(StartupEvaluator.class);
     private static final int JAVA_11 = 11;
     private static final int JAVA_21 = 21;
 
