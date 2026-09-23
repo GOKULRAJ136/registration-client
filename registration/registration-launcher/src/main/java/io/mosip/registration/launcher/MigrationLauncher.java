@@ -5,8 +5,7 @@
  */
 package io.mosip.registration.launcher;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import io.mosip.registration.launcher.common.LauncherLog;
 
 import java.io.File;
 import java.io.IOException;
@@ -27,7 +26,7 @@ import static io.mosip.registration.launcher.MigrationArtifacts.FILE_MIGRATION_E
  */
 public final class MigrationLauncher {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(MigrationLauncher.class);
+    private static final LauncherLog LOGGER = LauncherLog.get(MigrationLauncher.class);
 
     /** Seam so the process launch can be exercised in tests without spawning a real process. */
     @FunctionalInterface

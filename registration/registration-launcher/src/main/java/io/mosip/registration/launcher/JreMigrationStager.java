@@ -6,12 +6,11 @@
 package io.mosip.registration.launcher;
 
 import io.mosip.registration.launcher.common.DownloadProgressListener;
+import io.mosip.registration.launcher.common.LauncherLog;
 import io.mosip.registration.launcher.common.ManifestVerifier;
 import io.mosip.registration.launcher.common.OperatorAlertListener;
 import io.mosip.registration.launcher.common.ResumableDownloader;
 import io.mosip.registration.launcher.common.ZipExtractor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -53,7 +52,7 @@ import static io.mosip.registration.launcher.MigrationArtifacts.FILE_RUN_BAT_BAC
  */
 public final class JreMigrationStager {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(JreMigrationStager.class);
+    private static final LauncherLog LOGGER = LauncherLog.get(JreMigrationStager.class);
 
     /** Artifacts copied from {@code lib/} to {@code .artifacts/} during the one-time {@code <1.3.0 -> 1.3.0} transition. */
     private static final String[] TRANSITION_ARTIFACTS = {
