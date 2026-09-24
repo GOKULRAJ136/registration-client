@@ -274,8 +274,10 @@ java -cp "${java_cp}" io.mosip.registration.update.ManifestCreator --list "${cli
   "${target_dir}/run.bat"
 java -cp "${java_cp}" io.mosip.registration.update.ManifestSigner "${keystore}" "${signing_alias}" "${target_dir}/MANIFEST.MF" "${target_dir}/MANIFEST.MF.sig"
 
-# lib.zip : all of lib/** (including the signed lib/MANIFEST.MF) hosted from the upgrade server
-/usr/bin/zip -r lib.zip lib
+# lib.zip : all of lib/** (including the signed lib/MANIFEST.MF) hosted from the upgrade server. Zipped
+# from INSIDE lib/ so the entries are flat: the launcher unzips it straight into .TEMP/, which run.bat
+# then copies onto lib/, so a lib/ prefix would stage every file one level too deep and fail verification.
+(cd lib && /usr/bin/zip -r ../lib.zip .)
 
 cd "${work_dir}"/registration-client/target/
 
