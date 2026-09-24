@@ -182,6 +182,13 @@ cp "${launcher_target}/_launcher.jar" "${lib_dir}/_launcher.jar"
   rm -rf props provider.pem
 )
 
+# Sign _launcher.jar with the same identity as registration-client-*.jar. Both carry classes in
+# io.mosip.registration.controller (Initialization must keep that FQN for run.bat), and the JVM refuses
+# to load a package whose classes come from differently signed jars: an unsigned launcher fails to load
+# ClientApplication with "signer information does not match". Signed AFTER the jar uf above (updating a
+# signed jar breaks its signature) and before both manifests below, so the signed bytes are hashed.
+jarsigner -keystore "${work_dir}"/build_files/keystore.p12 -storepass ${keystore_secret} -tsa ${signer_timestamp_url_env} -digestalg SHA-256 "${lib_dir}/_launcher.jar" CodeSigning
+
 # Authenticode-sign migration.exe / rollback.exe so Windows/AV accept them. Signed HERE, before both
 # manifests below, so the SIGNED bytes are what gets hashed. This is OS-level trust only: the launcher's
 # own gate is the hash in the signature-verified root MANIFEST.MF, so an unsigned exe still fails closed
