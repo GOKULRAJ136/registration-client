@@ -114,6 +114,9 @@ echo "xcopy /s /k /y /q jre\jre jre && rmdir /s /q jre\jre" >> "${work_dir}"/reg
 echo ")" >> "${work_dir}"/registration-client/target/run.bat
 echo "if exist .UNKNOWN_JARS (" >> "${work_dir}"/registration-client/target/run.bat
 echo "FOR /F \"tokens=* delims=\" %%x in (.UNKNOWN_JARS) DO DEL /Q lib\%%x" >> "${work_dir}"/registration-client/target/run.bat
+# Consume the list once: left in place it is re-applied on every launch, and after an upgrade it can name
+# jars the new version also ships (the <1.3.0 -> 1.3.0 transition lists the entire old lib/).
+echo "del /q .UNKNOWN_JARS" >> "${work_dir}"/registration-client/target/run.bat
 echo ")" >> "${work_dir}"/registration-client/target/run.bat
 echo "if exist .TEMP (" >> "${work_dir}"/registration-client/target/run.bat
 echo "echo Starting Registration Client after Upgrade" >> "${work_dir}"/registration-client/target/run.bat
