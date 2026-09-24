@@ -164,6 +164,21 @@ cp "${launcher_target}/rollback.exe"  "${lib_dir}/rollback.exe"
 # _launcher.jar : the single entry point (registration-launcher module build output)
 cp "${launcher_target}/_launcher.jar" "${lib_dir}/_launcher.jar"
 
+# The launcher must be self-contained: across the <1.3.0 -> 1.3.0 transition it runs with only the root
+# artifacts left in lib/, the registration-services jar that carries these two files having been deleted
+# as unknown. So it gets its own copy of the environment config (without it no upgrade-server URL can be
+# built) and of the signer certificate (without it the manifest signatures are checked against the
+# development certificate bundled at build time, and fail). Injected before both manifests below so the
+# updated bytes are what gets hashed.
+(
+  cd "${lib_dir}"
+  mkdir -p props
+  cp "${work_dir}"/mosip-application.properties props/mosip-application.properties
+  cp "${work_dir}"/build_files/Client.crt provider.pem
+  jar uf _launcher.jar props/mosip-application.properties provider.pem
+  rm -rf props provider.pem
+)
+
 # Authenticode-sign migration.exe / rollback.exe so Windows/AV accept them. Signed HERE, before both
 # manifests below, so the SIGNED bytes are what gets hashed. This is OS-level trust only: the launcher's
 # own gate is the hash in the signature-verified root MANIFEST.MF, so an unsigned exe still fails closed
