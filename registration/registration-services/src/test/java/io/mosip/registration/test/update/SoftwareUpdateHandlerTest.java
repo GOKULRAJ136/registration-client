@@ -359,6 +359,40 @@ public class SoftwareUpdateHandlerTest {
 	}
 
 	@Test
+	public void doSoftwareUpgrade_withoutBinFolder_skipsBinBackupAndRestore() throws Exception {
+		// reg-client.zip ships no bin/, so a fresh install has none (nor does this module's working dir).
+		Assert.assertFalse("precondition: no bin/ in the working dir", new File("bin").exists());
+		Attributes attributes = new Attributes();
+		attributes.put(Attributes.Name.MANIFEST_VERSION, "1.2.0-SNAPSHOT");
+		Mockito.when(manifest.getMainAttributes()).thenReturn(attributes);
+		ReflectionTestUtils.setField(softwareUpdateHandler, "backUpPath", tempFolder.getRoot().getAbsolutePath());
+		ReflectionTestUtils.setField(softwareUpdateHandler, "serverRegClientURL", "https://dev.mosip.net/registration-client/");
+		ReflectionTestUtils.setField(softwareUpdateHandler, "latestVersion", "");
+		PowerMockito.suppress(PowerMockito.method(FileUtils.class, "copyFile", File.class, File.class));
+		// Fail the manifest fetch so the run reaches rollBackSetup too, without touching the network.
+		PowerMockito.mockStatic(SoftwareUpdateUtil.class);
+		PowerMockito.stub(PowerMockito.method(SoftwareUpdateUtil.class, "download", String.class))
+				.toReturn(null);
+		// Mirror the real FileUtils, which throws on a missing source directory.
+		List<String> copiedSources = new ArrayList<>();
+		PowerMockito.doAnswer(inv -> {
+			File source = inv.getArgument(0);
+			copiedSources.add(source.getName());
+			if (!source.exists()) {
+				throw new io.mosip.kernel.core.exception.IOException("KER-UTL-004", "Source does not exist: " + source);
+			}
+			return null;
+		}).when(FileUtils.class, "copyDirectory", Mockito.any(File.class), Mockito.any(File.class));
+		Mockito.doNothing().when(globalParamService).update(Mockito.anyString(), Mockito.anyString());
+
+		softwareUpdateHandler.doSoftwareUpgrade();
+
+		Assert.assertFalse("bin/ must be neither backed up nor restored when absent", copiedSources.contains("bin"));
+		Assert.assertTrue("lib/ must still be backed up", copiedSources.contains("lib"));
+		Assert.assertFalse("rollback must not create bin/", new File("bin").exists());
+	}
+
+	@Test
 	public void updateDerbyDB_withVersionMappingsParseError_returnsResponse() throws Exception {
 		SoftwareUpdateHandler spyHandler = PowerMockito.spy(softwareUpdateHandler);
 		Attributes attributes = new Attributes();

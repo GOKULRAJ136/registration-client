@@ -525,9 +525,8 @@ public class SoftwareUpdateHandler extends BaseService {
 
 	private void backUpSetup(File backUpFolder) throws io.mosip.kernel.core.exception.IOException {
 		LOGGER.info("Backup of current version started {}", backUpFolder);
-		// bin backup folder
+		// bin backup folder -- created by copyDirectory only when bin/ exists, so rollBackSetup can tell
 		File bin = new File(backUpFolder.getAbsolutePath() + SLASH + binFolder);
-		bin.mkdirs();
 
 		// lib backup folder
 		File lib = new File(backUpFolder.getAbsolutePath() + SLASH + libFolder);
@@ -540,7 +539,12 @@ public class SoftwareUpdateHandler extends BaseService {
 		// manifest backup file
 		File manifest = new File(backUpFolder.getAbsolutePath() + SLASH + manifestFile);
 
-		FileUtils.copyDirectory(new File(binFolder), bin);
+		// reg-client.zip ships no bin/, and copyDirectory throws on a missing source, which used to
+		// abort every upgrade of a fresh install before anything was downloaded.
+		File binSource = new File(binFolder);
+		if (binSource.exists()) {
+			FileUtils.copyDirectory(binSource, bin);
+		}
 		FileUtils.copyDirectory(new File(libFolder), lib);
 		FileUtils.copyDirectory(new File(dbFolder), db);
 		FileUtils.copyFile(new File(manifestFile), manifest);
@@ -808,7 +812,10 @@ public class SoftwareUpdateHandler extends BaseService {
 	private void rollBackSetup(File backUpFolder) throws io.mosip.kernel.core.exception.IOException {
 		LOGGER.info("Replacing Backup of current version started");
 		if(backUpFolder.exists()) {
-			FileUtils.copyDirectory(new File(backUpFolder.getAbsolutePath() + SLASH + binFolder), new File(binFolder));
+			File binBackup = new File(backUpFolder.getAbsolutePath() + SLASH + binFolder);
+			if (binBackup.exists()) {
+				FileUtils.copyDirectory(binBackup, new File(binFolder));
+			}
 			FileUtils.copyDirectory(new File(backUpFolder.getAbsolutePath() + SLASH + libFolder), new File(libFolder));
 			FileUtils.copyFile(new File(backUpFolder.getAbsolutePath() + SLASH + manifestFile), new File(manifestFile));
 		}
