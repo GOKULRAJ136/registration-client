@@ -128,7 +128,9 @@ public final class JreMigrationStager {
     /**
      * As {@link #stage(File, Manifest, String, String, String, String, PublicKey, int, int)},
      * additionally reporting download byte progress to {@code progress} and operator-facing status
-     * lines to {@code alerts} (either may be {@code null}).
+     * lines to {@code alerts} (either may be {@code null}): the step now running (checking, downloading
+     * with megabytes received, unpacking, verifying, switching to Java 21) as well as the design's
+     * integrity-restore alert.
      */
     public static void stage(File root, Manifest verifiedRootManifest,
                              String libManifestUrl, String libManifestSigUrl, String libZipUrl,
@@ -156,6 +158,7 @@ public final class JreMigrationStager {
         //    BEFORE any of them are unzipped (jre21.zip) or made runnable (exes / _launcher.jar).
         //    A local copy that fails its hash is restored from the upgrade server rather than aborting:
         //    the manifest's signature is valid, so the manifest is trustworthy and only the file is bad.
+        status(alerts, "Checking the update files…");
         List<String> restored = verifyArtifactsAgainstRootManifest(verifiedRootManifest, artifacts, root,
                 rootArtifactBaseUrl, connectTimeout, readTimeout, progress, alerts);
         if (!restored.isEmpty()) {
@@ -169,7 +172,7 @@ public final class JreMigrationStager {
 
         // 3. stage the lib into .TEMP/ with full verification (signature + per-file hash + allowlist).
         LibUpdateResult libResult = LibUpdater.update(libManifestUrl, libManifestSigUrl, libZipUrl,
-                temp, trustedKey, connectTimeout, readTimeout, progress);
+                temp, trustedKey, connectTimeout, readTimeout, progress, alerts);
         if (libResult == LibUpdateResult.ABORT_INVALID_SIGNATURE) {
             // Case B (tamper/MITM): preserve the security distinction across the stage() boundary so the
             // operator sees the same "signature invalid" alert as the lib-only update path, not a
@@ -209,6 +212,7 @@ public final class JreMigrationStager {
             if (!jre21Zip.exists()) {
                 throw new IOException("Missing " + jre21Zip.getPath() + " required for JRE migration");
             }
+            status(alerts, "Unpacking Java 21…");
             ZipExtractor.extract(jre21Zip, partial);
             try {
                 // Files.move, not File.renameTo: renameTo returns a bare false that discards the OS
@@ -247,6 +251,7 @@ public final class JreMigrationStager {
         //    this closes the "absent artifacts are skipped" hole in that check.
         requireMigrationInputs(artifacts);
 
+        status(alerts, "Switching to Java 21. The application will close and restart…");
         LOGGER.info("JRE migration staged (verified); caller should now launch migration.exe and exit");
     }
 
@@ -393,6 +398,23 @@ public final class JreMigrationStager {
         } catch (RuntimeException e) {
             // A status line must never break the upgrade it is reporting on.
             LOGGER.warn("Could not surface the operator alert ({})", e.getMessage());
+        }
+    }
+
+    /**
+     * Shows an operator-facing step line when a listener is wired. Unlike {@link #alert} it is not
+     * logged as a warning: it reports normal progress, which the surrounding steps already log.
+     * Never fails the upgrade.
+     */
+    private static void status(OperatorAlertListener alerts, String message) {
+        if (alerts == null) {
+            return;
+        }
+        try {
+            alerts.onAlert(message);
+        } catch (RuntimeException e) {
+            // A status line must never break the upgrade it is reporting on.
+            LOGGER.warn("Could not show the status line ({})", e.getMessage());
         }
     }
 

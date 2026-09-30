@@ -26,6 +26,7 @@ import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Signature;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -354,8 +355,64 @@ public class JreMigrationStagerTest {
                     ts.url("/v/lib/"), keyPair.getPublic(), 50000, 30000, null, alerts::add);
             fail("expected IntegrityRestoredException for a tampered run.bat");
         } catch (IntegrityRestoredException expected) {
-            assertEquals(Collections.singletonList("run.bat integrity check failed. Restoring from server..."),
+            // The step line comes first; the restore alert must follow it, word for word, and be the
+            // last thing the operator sees before the restart prompt.
+            assertEquals(Arrays.asList("Checking the update files…",
+                            "run.bat integrity check failed. Restoring from server..."),
                     alerts);
+        } finally {
+            ts.stop();
+        }
+    }
+
+    @Test
+    public void stage_happyPath_reportsEachStepToTheOperatorInOrder() throws Exception {
+        File root = folder.getRoot();
+        TestServer ts = baseSetup(root);
+        // On a real install the launcher has no console, so the progress window's status line is the
+        // operator's only sign the upgrade is moving: every slow step must announce itself, in order.
+        List<String> lines = new ArrayList<>();
+        try {
+            JreMigrationStager.stage(root, ts.rootManifest,
+                    ts.url("/v/lib/MANIFEST.MF"), ts.url("/v/lib/MANIFEST.MF.sig"), ts.url("/v/lib.zip"),
+                    ts.url("/v/lib/"), keyPair.getPublic(), 50000, 30000, null, lines::add);
+
+            List<String> downloadLines = new ArrayList<>();
+            List<String> steps = new ArrayList<>();
+            for (String line : lines) {
+                (line.startsWith("Downloading the update (") ? downloadLines : steps).add(line);
+            }
+            assertEquals(Arrays.asList(
+                    "Checking the update files…",
+                    "Downloading the update…",
+                    "Unpacking the update…",
+                    "Verifying the update files…",
+                    "Unpacking Java 21…",
+                    "Switching to Java 21. The application will close and restart…"), steps);
+            assertFalse("the lib.zip download must report the megabytes received", downloadLines.isEmpty());
+            int firstDownload = lines.indexOf(downloadLines.get(0));
+            assertTrue("download progress must sit between the download and unpack steps",
+                    firstDownload > lines.indexOf("Downloading the update…")
+                            && firstDownload < lines.indexOf("Unpacking the update…"));
+        } finally {
+            ts.stop();
+        }
+    }
+
+    @Test
+    public void stage_statusListenerThrows_upgradeStillCompletes() throws Exception {
+        File root = folder.getRoot();
+        TestServer ts = baseSetup(root);
+        // A broken window must never break the upgrade it is reporting on.
+        try {
+            JreMigrationStager.stage(root, ts.rootManifest,
+                    ts.url("/v/lib/MANIFEST.MF"), ts.url("/v/lib/MANIFEST.MF.sig"), ts.url("/v/lib.zip"),
+                    ts.url("/v/lib/"), keyPair.getPublic(), 50000, 30000, null,
+                    line -> { throw new IllegalStateException("window gone"); });
+
+            assertTrue(new File(root, ".TEMP/app.jar").exists());
+            assertTrue(new File(root, "jre21_temp/release").exists());
+            assertTrue(new File(root, "migration.exe").exists());
         } finally {
             ts.stop();
         }

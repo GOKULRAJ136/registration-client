@@ -145,8 +145,13 @@ public final class LauncherDialogs {
             SwingUtilities.invokeLater(() -> {
                 label.setText(text);
                 // Resize for the new line, but do NOT re-centre: the window would jump away from
-                // wherever the operator had dragged it.
+                // wherever the operator had dragged it. Grow only, never shrink: the download line
+                // changes every percent, and a width that follows each new text makes the window jitter.
+                int width = dialog.getWidth();
                 dialog.pack();
+                if (dialog.getWidth() < width) {
+                    dialog.setSize(width, dialog.getHeight());
+                }
             });
         }
 

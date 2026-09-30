@@ -337,7 +337,7 @@ public class Initialization {
             String version = requireVersion(ManifestVerifier.getVersion(verifiedRootManifest));
             LibUpdateResult result = LibUpdater.update(
                     config.libManifestUrl(version), config.libManifestSigUrl(version), config.libZipUrl(version),
-                    TEMP_DIR, trustedKey, CONNECT_TIMEOUT, READ_TIMEOUT, progress::update);
+                    TEMP_DIR, trustedKey, CONNECT_TIMEOUT, READ_TIMEOUT, progress::update, progress::message);
             progress.close();
             switch (result) {
                 case READY_RESTART:
