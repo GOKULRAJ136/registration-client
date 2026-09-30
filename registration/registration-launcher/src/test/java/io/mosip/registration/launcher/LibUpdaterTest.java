@@ -105,6 +105,45 @@ public class LibUpdaterTest {
     }
 
     @Test
+    public void update_reportsEachStepToTheOperator_withDownloadSizeInBetween() throws Exception {
+        // The lib-only update path shows the same window as the JRE migration; its status line must name
+        // the step now running, and the download line must carry the size so a slow link visibly moves.
+        byte[] manifest = manifestBytes("1.4.0", ENTRY, HashUtil.sha256Hex(JAR));
+        byte[] sig = sign(manifest, keyPair.getPrivate());
+        byte[] zip = zipBytes(ENTRY, JAR);
+
+        HttpServer server = serve(routes(manifest, sig, zip));
+        File temp = folder.newFolder(".TEMP");
+        try {
+            List<String> lines = new ArrayList<>();
+            List<long[]> events = new ArrayList<>();
+            LibUpdateResult result = LibUpdater.update(
+                    url(server, "/v/lib/MANIFEST.MF"), url(server, "/v/lib/MANIFEST.MF.sig"),
+                    url(server, "/v/lib.zip"), temp, keyPair.getPublic(), 50000, 30000,
+                    (done, total) -> events.add(new long[]{done, total}), lines::add);
+
+            assertEquals(LibUpdateResult.READY_RESTART, result);
+            assertFalse("the caller's byte-progress listener must still be fed", events.isEmpty());
+            assertEquals("Downloading the update…", lines.get(0));
+            assertTrue("a size line must follow the download step",
+                    lines.get(1).startsWith("Downloading the update (") && lines.get(1).endsWith(" MB)…"));
+            assertEquals("Unpacking the update…", lines.get(lines.size() - 2));
+            assertEquals("Verifying the update files…", lines.get(lines.size() - 1));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    public void megabytes_roundsDownToWholeMegabytes() {
+        assertEquals(0L, LibUpdater.megabytes(0L));
+        assertEquals(0L, LibUpdater.megabytes(1024L * 1024L - 1L));
+        assertEquals(1L, LibUpdater.megabytes(1024L * 1024L));
+        // the 1.3.0 lib.zip served on dev1: 382,219,410 bytes, which Windows Explorer shows as 364 MB
+        assertEquals(364L, LibUpdater.megabytes(382_219_410L));
+    }
+
+    @Test
     public void update_invalidSignature_abortsBeforeZip() throws Exception {
         byte[] manifest = manifestBytes("1.4.0", ENTRY, HashUtil.sha256Hex(JAR));
         byte[] sig = sign(manifest, wrongKeyPair.getPrivate()); // signed by untrusted key

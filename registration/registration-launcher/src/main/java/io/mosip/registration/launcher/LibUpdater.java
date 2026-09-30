@@ -8,6 +8,7 @@ package io.mosip.registration.launcher;
 import io.mosip.registration.launcher.common.DownloadProgressListener;
 import io.mosip.registration.launcher.common.LauncherLog;
 import io.mosip.registration.launcher.common.ManifestVerifier;
+import io.mosip.registration.launcher.common.OperatorAlertListener;
 import io.mosip.registration.launcher.common.ResumableDownloader;
 import io.mosip.registration.launcher.common.SignatureVerifier;
 import io.mosip.registration.launcher.common.ZipExtractor;
@@ -100,6 +101,22 @@ public final class LibUpdater {
                                          File tempDir, PublicKey trustedKey,
                                          int connectTimeout, int readTimeout,
                                          DownloadProgressListener progress) throws IOException {
+        return update(libManifestUrl, libManifestSigUrl, libZipUrl, tempDir, trustedKey,
+                connectTimeout, readTimeout, progress, null);
+    }
+
+    /**
+     * As {@link #update(String, String, String, File, PublicKey, int, int, DownloadProgressListener)},
+     * additionally telling {@code status} (may be {@code null}) which step is running, so the operator
+     * watching the progress window can see the update moving rather than a single unchanging line. During
+     * the {@code lib.zip} download the line also carries the megabytes received, which keeps visibly
+     * advancing on a slow link where a whole percent can take several seconds.
+     */
+    public static LibUpdateResult update(String libManifestUrl, String libManifestSigUrl, String libZipUrl,
+                                         File tempDir, PublicKey trustedKey,
+                                         int connectTimeout, int readTimeout,
+                                         DownloadProgressListener progress,
+                                         OperatorAlertListener status) throws IOException {
         // Reject invalid timeouts at this entry point (fail fast) rather than letting a 0/infinite
         // value reach the per-file downloads below and hang the launcher.
         ResumableDownloader.requirePositiveTimeouts(connectTimeout, readTimeout);
@@ -134,7 +151,9 @@ public final class LibUpdater {
         //    unexpected by the allowlist check below. getAbsoluteFile() guards against a relative
         //    .TEMP whose getParentFile() would otherwise be null.
         File zipStagingDir = new File(tempDir.getAbsoluteFile().getParentFile(), tempDir.getName() + ".zipstage");
-        ResumableDownloader.download(libZipUrl, zipStagingDir.getPath(), LIB_ZIP, connectTimeout, readTimeout, progress);
+        status(status, "Downloading the update…");
+        ResumableDownloader.download(libZipUrl, zipStagingDir.getPath(), LIB_ZIP, connectTimeout, readTimeout,
+                withDownloadStatus(progress, status));
 
         // Once the download returns, lib.zip is complete and no longer needs its resumable .part, so we
         // always drop the staging dir after extraction — even if extraction fails. An interrupted
@@ -146,6 +165,7 @@ public final class LibUpdater {
             //    allowlist (findUnexpectedFiles), making a valid update fail until .TEMP/ is cleaned by
             //    hand. The just-downloaded control files (manifest, signature) are preserved.
             clearStalePayload(tempDir);
+            status(status, "Unpacking the update…");
             ZipExtractor.extract(new File(zipStagingDir, LIB_ZIP), tempDir);
         } finally {
             deleteTree(zipStagingDir);
@@ -157,6 +177,7 @@ public final class LibUpdater {
 
         // 5. verify each extracted file against the verified manifest, and reject any extra file the
         //    manifest does not list (allowlist).
+        status(status, "Verifying the update files…");
         List<String> mismatched = ManifestVerifier.findMismatchedFiles(trustedManifest, tempDir);
         List<String> unexpected = ManifestVerifier.findUnexpectedFiles(trustedManifest, tempDir, CONTROL_FILES);
         if (!mismatched.isEmpty() || !unexpected.isEmpty()) {
@@ -166,6 +187,48 @@ public final class LibUpdater {
 
         LOGGER.info("lib update staged in {} — restart required to apply", tempDir);
         return LibUpdateResult.READY_RESTART;
+    }
+
+    /**
+     * Wraps the caller's byte-progress listener so each report also refreshes the status line with the
+     * megabytes received. Called at most once per whole percent (see {@code ResumableDownloader}), so
+     * the window is not flooded. Returns the caller's listener unchanged when there is no status sink.
+     */
+    private static DownloadProgressListener withDownloadStatus(DownloadProgressListener progress,
+                                                               OperatorAlertListener status) {
+        if (status == null) {
+            return progress;
+        }
+        return (done, total) -> {
+            if (progress != null) {
+                progress.onProgress(done, total);
+            }
+            if (total > 0) {
+                status(status, "Downloading the update (" + megabytes(done) + " of " + megabytes(total) + " MB)…");
+            }
+        };
+    }
+
+    /** Whole megabytes (1024 x 1024 bytes, as Windows Explorer shows them), rounded down. */
+    static long megabytes(long bytes) {
+        return bytes / (1024L * 1024L);
+    }
+
+    /**
+     * Shows an operator-facing step line when a listener is wired, without logging it: the steps are
+     * already logged in detail, and the per-percent download lines would flood {@code launcher.log}.
+     * Never fails the update.
+     */
+    private static void status(OperatorAlertListener status, String message) {
+        if (status == null) {
+            return;
+        }
+        try {
+            status.onAlert(message);
+        } catch (RuntimeException e) {
+            // A status line must never break the update it is reporting on.
+            LOGGER.warn("Could not show the status line ({})", e.getMessage());
+        }
     }
 
     /**
