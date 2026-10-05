@@ -500,20 +500,82 @@ public class JreMigrationStagerTest {
     }
 
     @Test
-    public void stage_runBatMissingFromArtifacts_failsBeforeStartingTheSwap() throws Exception {
+    public void stage_artifactsMissingAfterLateRollback_areRestoredFromServer() throws Exception {
         File root = folder.getRoot();
         TestServer ts = baseSetup(root);
-        // Same point-of-no-return argument for run.bat: migration.exe restores it to the app root after
-        // the swap, and hard-fails without it, so the client is left on Java 21 with the JRE 11 script.
+        // The state a rollback leaves once migration.exe has emptied lib/: rollback.exe removed
+        // .artifacts/, and only _launcher.jar (copied back from lib/) is there again. Nothing on the
+        // machine holds jre21.zip, the exes or run.bat any more, so every retry used to fail on them.
+        for (String name : Arrays.asList("jre21.zip", "migration.exe", "rollback.exe", "run.bat")) {
+            assertTrue(new File(root, ".artifacts/" + name).delete());
+        }
+        List<String> alerts = new ArrayList<>();
+        try {
+            JreMigrationStager.stage(root, ts.rootManifest,
+                    ts.url("/v/lib/MANIFEST.MF"), ts.url("/v/lib/MANIFEST.MF.sig"), ts.url("/v/lib.zip"),
+                    ts.url("/v/lib/"), keyPair.getPublic(), 50000, 30000, null, alerts::add);
+            fail("expected IntegrityRestoredException for artifacts missing after a rollback");
+        } catch (IntegrityRestoredException expected) {
+            assertEquals(Arrays.asList("jre21.zip", "migration.exe", "rollback.exe", "run.bat"),
+                    expected.getRestored());
+            assertEquals("migration-exe-bytes", read(new File(root, ".artifacts/migration.exe")));
+            assertEquals("rollback-exe-bytes", read(new File(root, ".artifacts/rollback.exe")));
+            assertEquals("jre21-run-bat", read(new File(root, ".artifacts/run.bat")));
+            assertTrue(new File(root, ".artifacts/jre21.zip").exists());
+            assertTrue(alerts.contains("migration.exe is missing. Restoring from server..."));
+            // stopped before staging: nothing past the integrity gate has run
+            assertFalse(new File(root, ".TEMP/app.jar").exists());
+            assertFalse(new File(root, ".TEMP.restore").exists());
+        } finally {
+            ts.stop();
+        }
+    }
+
+    @Test
+    public void stage_afterMissingArtifactsWereRestored_retryCompletes() throws Exception {
+        File root = folder.getRoot();
+        TestServer ts = baseSetup(root);
+        for (String name : Arrays.asList("jre21.zip", "migration.exe", "rollback.exe", "run.bat")) {
+            assertTrue(new File(root, ".artifacts/" + name).delete());
+        }
+        try {
+            try {
+                JreMigrationStager.stage(root, ts.rootManifest,
+                        ts.url("/v/lib/MANIFEST.MF"), ts.url("/v/lib/MANIFEST.MF.sig"), ts.url("/v/lib.zip"),
+                        ts.url("/v/lib/"), keyPair.getPublic(), 50000, 30000);
+                fail("expected IntegrityRestoredException on the first run");
+            } catch (IntegrityRestoredException expected) {
+                // the operator restarts
+            }
+            JreMigrationStager.stage(root, ts.rootManifest,
+                    ts.url("/v/lib/MANIFEST.MF"), ts.url("/v/lib/MANIFEST.MF.sig"), ts.url("/v/lib.zip"),
+                    ts.url("/v/lib/"), keyPair.getPublic(), 50000, 30000);
+            assertTrue(new File(root, ".TEMP/app.jar").exists());
+            assertTrue(new File(root, "jre21_temp/release").exists());
+            assertEquals("migration-exe-bytes", read(new File(root, "migration.exe")));
+        } finally {
+            ts.stop();
+        }
+    }
+
+    @Test
+    public void stage_missingArtifactWhoseServerCopyIsBad_failsClosed() throws Exception {
+        File root = folder.getRoot();
+        // The server's run.bat disagrees with the signed root manifest: restoring it must not install it,
+        // and staging must not go on to start the swap without a verified run.bat.
+        TestServer ts = baseSetup(root, true,
+                Collections.singletonMap("/v/lib/run.bat", "server-side-garbage".getBytes(StandardCharsets.UTF_8)));
         assertTrue(new File(root, ".artifacts/run.bat").delete());
         try {
             JreMigrationStager.stage(root, ts.rootManifest,
                     ts.url("/v/lib/MANIFEST.MF"), ts.url("/v/lib/MANIFEST.MF.sig"), ts.url("/v/lib.zip"),
                     ts.url("/v/lib/"), keyPair.getPublic(), 50000, 30000);
-            fail("expected IOException when run.bat is absent from .artifacts/");
+            fail("expected IOException when the restored run.bat fails its hash");
         } catch (IOException expected) {
             assertTrue(expected.getMessage().contains("run.bat"));
-            assertTrue(expected.getMessage().contains("rollback is no longer possible"));
+            assertTrue(expected.getMessage().contains("still fails its root-manifest hash"));
+            assertFalse(new File(root, ".artifacts/run.bat").exists());
+            assertFalse(new File(root, "migration.exe").exists());
         } finally {
             ts.stop();
         }
@@ -541,20 +603,25 @@ public class JreMigrationStagerTest {
     }
 
     @Test
-    public void stage_missingMigrationExe_failsClosed() throws Exception {
+    public void stage_missingMigrationExeNotOnServer_failsClosed() throws Exception {
         File root = folder.getRoot();
         TestServer ts = baseSetup(root);
-        // migration.exe is listed in the root manifest but NOT present in .artifacts/ -> copyRequired
-        // must abort rather than silently skip (the launcher would otherwise have no exe to run).
+        // migration.exe is listed in the root manifest but NOT present in .artifacts/, and the server
+        // cannot supply it either -> staging must abort rather than go on without an exe to run.
         Files.delete(new File(root, ".artifacts/migration.exe").toPath());
+        ts.server.removeContext("/");
+        ts.server.createContext("/", exchange -> {
+            exchange.sendResponseHeaders(404, -1);
+            exchange.close();
+        });
         try {
             JreMigrationStager.stage(root, ts.rootManifest,
                     ts.url("/v/lib/MANIFEST.MF"), ts.url("/v/lib/MANIFEST.MF.sig"), ts.url("/v/lib.zip"),
                     ts.url("/v/lib/"), keyPair.getPublic(), 50000, 30000);
             fail("expected IOException for a missing migration.exe");
         } catch (IOException expected) {
-            assertTrue(expected.getMessage().contains("migration.exe"));
-            assertTrue(expected.getMessage().contains("required"));
+            assertFalse(new File(root, ".artifacts/migration.exe").exists());
+            assertFalse(new File(root, "migration.exe").exists());
         } finally {
             ts.stop();
         }
