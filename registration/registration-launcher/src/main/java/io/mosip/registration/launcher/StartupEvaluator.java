@@ -101,6 +101,17 @@ public final class StartupEvaluator {
             return new Evaluation(StartupAction.ABORT_CORRUPT_LIB_MANIFEST, verifiedManifest);
         }
         if (rootVersion.equals(libVersion)) {
+            // Matching versions only mean "installed" on Java 21+: a 1.3.0+ lib/ can never run on an older
+            // JRE. On Java 11 they mean a migration that stopped after the lib manifest was staged (a
+            // killed migration.exe, a failed Java 21 unzip, a dropped lib.zip download): the old run.bat
+            // has already copied .TEMP/ into lib/ on this launch. Starting normally would fail on the
+            // Java 21 class files, so re-enter the migration instead. Staging is idempotent: it keeps a
+            // complete jre21_temp/, discards a stale .partial, and resumes lib.zip from its .part file.
+            if (jreMajorVersion < JAVA_21) {
+                LOGGER.info("Manifest versions match ({}) but the JRE is {} — the Java 21 migration did not "
+                        + "finish", rootVersion, jreMajorVersion);
+                return new Evaluation(migrationAction(jreMajorVersion), verifiedManifest);
+            }
             // This is the ONLY branch that trusts lib/MANIFEST.MF: nothing is going to replace lib/, so
             // that manifest is what the per-file hash checks of the jars about to run are measured
             // against, and the launcher is the only thing that sees it before they load. Verify its
