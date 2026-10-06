@@ -102,8 +102,8 @@ public final class StartupEvaluator {
         }
         if (rootVersion.equals(libVersion)) {
             // Matching versions only mean "installed" on Java 21+: a 1.3.0+ lib/ can never run on an older
-            // JRE. On Java 11 they mean a migration that stopped after the lib manifest was staged (a
-            // killed migration.exe, a failed Java 21 unzip, a dropped lib.zip download): the old run.bat
+            // JRE. On Java 11 they mean a migration that stopped after the lib was staged (a killed
+            // migration.exe, a failed Java 21 unzip): the old run.bat
             // has already copied .TEMP/ into lib/ on this launch. Starting normally would fail on the
             // Java 21 class files, so re-enter the migration instead. Staging is idempotent: it keeps a
             // complete jre21_temp/, discards a stale .partial, and resumes lib.zip from its .part file.
