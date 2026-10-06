@@ -116,8 +116,8 @@ public class SoftwareUpdateHandlerDbUpgradeTest {
 		assertTrue("the 1.3.0 script must add CA_CERT_STORE.CA_CERT_TYPE", hasCaCertTypeColumn());
 		assertEquals("the 1.3.0 script's MERGE must have run", "1",
 				globalParam("mosip.kernel.partner.cacertificate.upload.minimumvalidity.month"));
-		assertEquals("1.3.0-SNAPSHOT", globalParam(RegistrationConstants.SERVICES_VERSION_KEY));
-		assertEquals("1.3.0-SNAPSHOT",
+		assertEquals("1.3.1-SNAPSHOT", globalParam(RegistrationConstants.SERVICES_VERSION_KEY));
+		assertEquals("1.3.1-SNAPSHOT",
 				ApplicationContext.getStringValueFromApplicationMap(RegistrationConstants.SERVICES_VERSION_KEY));
 	}
 
@@ -132,7 +132,7 @@ public class SoftwareUpdateHandlerDbUpgradeTest {
 		assertNotNull(backups);
 		assertEquals(1, backups.length);
 		File backup = backups[0];
-		assertTrue(backup.getName(), backup.getName().startsWith("1.3.0-SNAPSHOT_"));
+		assertTrue(backup.getName(), backup.getName().startsWith("1.3.1-SNAPSHOT_"));
 		assertTrue(new File(backup, "lib/registration-client.jar").isFile());
 		assertTrue(new File(backup, "db/service.properties").isFile());
 		assertTrue(new File(backup, "MANIFEST.MF").isFile());
@@ -149,7 +149,7 @@ public class SoftwareUpdateHandlerDbUpgradeTest {
 
 		assertNull(response.getErrorResponseDTOs());
 		assertTrue(hasCaCertTypeColumn());
-		assertEquals("1.3.0-SNAPSHOT", globalParam(RegistrationConstants.SERVICES_VERSION_KEY));
+		assertEquals("1.3.1-SNAPSHOT", globalParam(RegistrationConstants.SERVICES_VERSION_KEY));
 	}
 
 	@Test
@@ -182,7 +182,7 @@ public class SoftwareUpdateHandlerDbUpgradeTest {
 
 		assertNull(response.getErrorResponseDTOs());
 		assertTrue(hasCaCertTypeColumn());
-		assertEquals("1.3.0-SNAPSHOT", globalParam(RegistrationConstants.SERVICES_VERSION_KEY));
+		assertEquals("1.3.1-SNAPSHOT", globalParam(RegistrationConstants.SERVICES_VERSION_KEY));
 	}
 
 	@Test
