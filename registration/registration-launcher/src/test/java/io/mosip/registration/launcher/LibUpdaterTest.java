@@ -33,6 +33,7 @@ import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -272,6 +273,89 @@ public class LibUpdaterTest {
         }
     }
 
+    @Test
+    public void update_success_publishesVerifiedManifestAndSignatureInTemp_andLeavesNoStaging() throws Exception {
+        byte[] manifest = manifestBytes("1.4.0", ENTRY, HashUtil.sha256Hex(JAR));
+        byte[] sig = sign(manifest, keyPair.getPrivate());
+        HttpServer server = serve(routes(manifest, sig, zipBytes(ENTRY, JAR)));
+        File temp = new File(folder.getRoot(), ".TEMP");
+        try {
+            LibUpdateResult result = LibUpdater.update(
+                    url(server, "/v/lib/MANIFEST.MF"), url(server, "/v/lib/MANIFEST.MF.sig"),
+                    url(server, "/v/lib.zip"), temp, keyPair.getPublic(), 50000, 30000);
+
+            assertEquals(LibUpdateResult.READY_RESTART, result);
+            assertArrayEquals(manifest, Files.readAllBytes(new File(temp, "MANIFEST.MF").toPath()));
+            assertArrayEquals(sig, Files.readAllBytes(new File(temp, "MANIFEST.MF.sig").toPath()));
+            assertFalse(new File(folder.getRoot(), ".TEMP.zipstage").exists());
+            assertFalse(new File(folder.getRoot(), ".TEMP.extract").exists());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    public void update_libZipDownloadCutOff_leavesNoTemp_andKeepsThePartForResume() throws Exception {
+        // dev1, Java 21 lib-only update: lib.zip was cut off mid-download after the new lib manifest and
+        // signature had been staged in .TEMP/. run.bat then copied them into lib/, the versions matched,
+        // and the launcher started normally on the old jars instead of resuming. Nothing may reach .TEMP/
+        // before the whole update is in, so the next start still sees different versions and resumes.
+        byte[] manifest = manifestBytes("1.4.0", ENTRY, HashUtil.sha256Hex(JAR));
+        byte[] sig = sign(manifest, keyPair.getPrivate());
+        Map<String, byte[]> routes = routes(manifest, sig, zipBytes(ENTRY, JAR));
+        HttpServer server = serve(routes, Collections.synchronizedList(new ArrayList<>()), "/v/lib.zip");
+        File temp = new File(folder.getRoot(), ".TEMP");
+        try {
+            LibUpdater.update(
+                    url(server, "/v/lib/MANIFEST.MF"), url(server, "/v/lib/MANIFEST.MF.sig"),
+                    url(server, "/v/lib.zip"), temp, keyPair.getPublic(), 50000, 30000);
+            fail("expected an IOException for the cut-off lib.zip download");
+        } catch (IOException expected) {
+            assertFalse("a cut-off update must not leave .TEMP/ for run.bat to apply", temp.exists());
+            assertTrue("the partial lib.zip must be kept so the retry resumes",
+                    new File(folder.getRoot(), ".TEMP.zipstage/lib.zip.part").exists());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    public void update_verifyFailed_leavesNoTempAndNoUnpackedTree() throws Exception {
+        byte[] manifest = manifestBytes("1.4.0", ENTRY, HashUtil.sha256Hex("other".getBytes()));
+        byte[] sig = sign(manifest, keyPair.getPrivate());
+        HttpServer server = serve(routes(manifest, sig, zipBytes(ENTRY, JAR)));
+        File temp = new File(folder.getRoot(), ".TEMP");
+        try {
+            LibUpdateResult result = LibUpdater.update(
+                    url(server, "/v/lib/MANIFEST.MF"), url(server, "/v/lib/MANIFEST.MF.sig"),
+                    url(server, "/v/lib.zip"), temp, keyPair.getPublic(), 50000, 30000);
+
+            assertEquals(LibUpdateResult.VERIFY_FAILED, result);
+            assertFalse("a failed update must not leave .TEMP/ for run.bat to apply", temp.exists());
+            assertFalse(new File(folder.getRoot(), ".TEMP.extract").exists());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    public void update_invalidSignature_leavesNoTemp() throws Exception {
+        byte[] manifest = manifestBytes("1.4.0", ENTRY, HashUtil.sha256Hex(JAR));
+        byte[] sig = sign(manifest, wrongKeyPair.getPrivate());
+        HttpServer server = serve(routes(manifest, sig, zipBytes(ENTRY, JAR)));
+        File temp = new File(folder.getRoot(), ".TEMP");
+        try {
+            LibUpdateResult result = LibUpdater.update(
+                    url(server, "/v/lib/MANIFEST.MF"), url(server, "/v/lib/MANIFEST.MF.sig"),
+                    url(server, "/v/lib.zip"), temp, keyPair.getPublic(), 50000, 30000);
+
+            assertEquals(LibUpdateResult.ABORT_INVALID_SIGNATURE, result);
+            assertFalse("the rejected manifest and signature must not reach .TEMP/", temp.exists());
+        } finally {
+            server.stop(0);
+        }
+    }
+
     @Test(expected = IllegalArgumentException.class)
     public void update_nonPositiveReadTimeout_rejected() throws Exception {
         // Invalid timeout is rejected at this entry point (fail fast) before any download is attempted.
@@ -342,16 +426,33 @@ public class LibUpdaterTest {
      * checking for {@code temp/lib.zip} passes whether or not the download happened.
      */
     private static HttpServer serve(Map<String, byte[]> routes, List<String> requested) throws IOException {
+        return serve(routes, requested, null);
+    }
+
+    /**
+     * As {@link #serve(Map, List)}; the body of {@code cutOffPath} (if any) is announced at its full length
+     * but only half of it is sent before the connection closes, like a network drop mid-download.
+     */
+    private static HttpServer serve(Map<String, byte[]> routes, List<String> requested, String cutOffPath)
+            throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
         server.createContext("/", exchange -> {
-            requested.add(exchange.getRequestURI().getPath());
-            byte[] body = routes.get(exchange.getRequestURI().getPath());
+            String path = exchange.getRequestURI().getPath();
+            requested.add(path);
+            byte[] body = routes.get(path);
             if (body == null) {
                 exchange.sendResponseHeaders(404, -1);
                 exchange.close();
                 return;
             }
             exchange.sendResponseHeaders(200, body.length);
+            if (path.equals(cutOffPath)) {
+                OutputStream os = exchange.getResponseBody();
+                os.write(body, 0, body.length / 2);
+                os.flush();
+                exchange.close();
+                return;
+            }
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(body);
             }

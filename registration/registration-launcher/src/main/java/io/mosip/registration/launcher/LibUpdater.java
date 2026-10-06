@@ -46,6 +46,15 @@ import java.util.jar.Manifest;
  * under sub-directories. The only requirement is that the manifest's entry names match the extracted
  * layout; a disagreement (e.g. a build that ships a nested jar but lists it by a bare name) correctly
  * fails closed as {@link LibUpdateResult#VERIFY_FAILED}.
+ * <p>
+ * <b>{@code .TEMP/} only ever appears complete.</b> {@code run.bat} copies whatever is in {@code .TEMP/}
+ * into {@code lib/} on the next start, and the launcher then trusts a signature-valid
+ * {@code lib/MANIFEST.MF} whose version matches the root one. So nothing is written to {@code .TEMP/}
+ * until the whole update has been downloaded, unpacked and verified: the manifest, its signature and
+ * {@code lib.zip} are downloaded into the {@code .zipstage} sibling, unpacked into the {@code .extract}
+ * sibling, and that tree is renamed to {@code .TEMP/} as the last step. An update interrupted at any
+ * earlier point leaves no {@code .TEMP/}, the versions still differ on the next start, and the update
+ * is re-entered, resuming {@code lib.zip} from its {@code .part}.
  */
 public final class LibUpdater {
 
@@ -61,9 +70,10 @@ public final class LibUpdater {
     private static final long MAX_MANIFEST_BYTES = 1024L * 1024L;
 
     /**
-     * Control files legitimately present in the staging dir but not manifest entries. {@code lib.zip}
-     * is intentionally NOT listed: it is downloaded to a sibling staging dir (never into {@code .TEMP/}),
-     * so a {@code lib.zip} entry unpacked from the archive is an unexpected file and correctly rejected.
+     * Control files legitimately present in the staged lib but not manifest entries. {@code lib.zip}
+     * is intentionally NOT listed: it is downloaded to a sibling staging dir (never into the unpacked
+     * tree), so a {@code lib.zip} entry unpacked from the archive is an unexpected file and correctly
+     * rejected.
      */
     static final Set<String> CONTROL_FILES = new HashSet<>(Arrays.asList(MANIFEST, MANIFEST_SIG));
 
@@ -120,15 +130,21 @@ public final class LibUpdater {
         // Reject invalid timeouts at this entry point (fail fast) rather than letting a 0/infinite
         // value reach the per-file downloads below and hang the launcher.
         ResumableDownloader.requirePositiveTimeouts(connectTimeout, readTimeout);
-        Files.createDirectories(tempDir.toPath());
+
+        // Everything is staged in siblings of .TEMP/ (see the class note): .zipstage holds the downloads,
+        // .extract the unpacked tree. getAbsoluteFile() guards against a relative .TEMP whose
+        // getParentFile() would otherwise be null.
+        File stagingParent = tempDir.getAbsoluteFile().getParentFile();
+        File zipStagingDir = new File(stagingParent, tempDir.getName() + ".zipstage");
+        File extractDir = new File(stagingParent, tempDir.getName() + ".extract");
 
         // 1. download the new lib manifest and its detached signature
-        ResumableDownloader.download(libManifestUrl, tempDir.getPath(), MANIFEST, connectTimeout, readTimeout);
-        ResumableDownloader.download(libManifestSigUrl, tempDir.getPath(), MANIFEST_SIG, connectTimeout, readTimeout);
+        ResumableDownloader.download(libManifestUrl, zipStagingDir.getPath(), MANIFEST, connectTimeout, readTimeout);
+        ResumableDownloader.download(libManifestSigUrl, zipStagingDir.getPath(), MANIFEST_SIG, connectTimeout, readTimeout);
 
         // 2. verify the manifest signature; on failure do not download lib.zip (Case B)
-        File manifestFile = new File(tempDir, MANIFEST);
-        File signatureFile = new File(tempDir, MANIFEST_SIG);
+        File manifestFile = new File(zipStagingDir, MANIFEST);
+        File signatureFile = new File(zipStagingDir, MANIFEST_SIG);
         byte[] manifestBytes = readCapped(manifestFile, MAX_MANIFEST_BYTES);
         byte[] signatureBytes = readCapped(signatureFile, MAX_SIGNATURE_BYTES);
 
@@ -143,14 +159,11 @@ public final class LibUpdater {
             return LibUpdateResult.ABORT_INVALID_SIGNATURE;
         }
 
-        // 3. resumable download of lib.zip into a sibling staging dir — NOT into .TEMP/ itself.
+        // 3. resumable download of lib.zip into the staging dir — never into the tree it is unpacked to.
         //    Extracting an archive into the directory that also holds it lets a crafted entry named
         //    "lib.zip" overwrite the archive while it is still being read (and, as a former control
-        //    file, slip past the allowlist). Staging the archive outside .TEMP/ closes that
-        //    self-overwrite window; a stray "lib.zip" entry now lands in .TEMP/ and is rejected as
-        //    unexpected by the allowlist check below. getAbsoluteFile() guards against a relative
-        //    .TEMP whose getParentFile() would otherwise be null.
-        File zipStagingDir = new File(tempDir.getAbsoluteFile().getParentFile(), tempDir.getName() + ".zipstage");
+        //    file, slip past the allowlist). Keeping them apart closes that self-overwrite window; a
+        //    stray "lib.zip" entry lands in the unpacked tree and is rejected as unexpected below.
         status(status, "Downloading the update…");
         ResumableDownloader.download(libZipUrl, zipStagingDir.getPath(), LIB_ZIP, connectTimeout, readTimeout,
                 withDownloadStatus(progress, status));
@@ -160,31 +173,37 @@ public final class LibUpdater {
         // download throws above (before this try), leaving the staging dir + .part intact so the
         // operator retry resumes instead of re-fetching from the start.
         try {
-            // 4. clear any stale payload left by a previous (failed) attempt before unzipping into
-            //    .TEMP/. Otherwise old jars not present in the new manifest survive and trip the
-            //    allowlist (findUnexpectedFiles), making a valid update fail until .TEMP/ is cleaned by
-            //    hand. The just-downloaded control files (manifest, signature) are preserved.
-            clearStalePayload(tempDir);
+            // 4. unpack into a fresh tree: anything left there by an earlier attempt (a cut-off unzip,
+            //    jars of another version) would otherwise survive and trip the allowlist below.
+            deleteTree(extractDir);
             status(status, "Unpacking the update…");
-            ZipExtractor.extract(new File(zipStagingDir, LIB_ZIP), tempDir);
+            ZipExtractor.extract(new File(zipStagingDir, LIB_ZIP), extractDir);
+        } catch (IOException | RuntimeException e) {
+            deleteTree(extractDir);
+            throw e;
         } finally {
             deleteTree(zipStagingDir);
         }
 
-        // lib.zip may ship its own MANIFEST.MF; restore the signature-verified bytes so the manifest
-        // that run.bat copies into lib/ is the trusted one, not the (unverified) archived copy.
-        Files.write(manifestFile.toPath(), manifestBytes);
+        // lib.zip may ship its own MANIFEST.MF(+sig); write the signature-verified bytes over them so the
+        // manifest that run.bat copies into lib/ is the trusted one, not the (unverified) archived copy.
+        Files.write(new File(extractDir, MANIFEST).toPath(), manifestBytes);
+        Files.write(new File(extractDir, MANIFEST_SIG).toPath(), signatureBytes);
 
         // 5. verify each extracted file against the verified manifest, and reject any extra file the
         //    manifest does not list (allowlist).
         status(status, "Verifying the update files…");
-        List<String> mismatched = ManifestVerifier.findMismatchedFiles(trustedManifest, tempDir);
-        List<String> unexpected = ManifestVerifier.findUnexpectedFiles(trustedManifest, tempDir, CONTROL_FILES);
+        List<String> mismatched = ManifestVerifier.findMismatchedFiles(trustedManifest, extractDir);
+        List<String> unexpected = ManifestVerifier.findUnexpectedFiles(trustedManifest, extractDir, CONTROL_FILES);
         if (!mismatched.isEmpty() || !unexpected.isEmpty()) {
             LOGGER.error("Extracted lib failed integrity check — mismatched: {}, unexpected: {}", mismatched, unexpected);
+            deleteTree(extractDir);
             return LibUpdateResult.VERIFY_FAILED;
         }
 
+        // 6. publish: only now does .TEMP/ appear, complete and verified, for run.bat to apply.
+        deleteTree(tempDir);
+        Files.move(extractDir.toPath(), tempDir.toPath());
         LOGGER.info("lib update staged in {} — restart required to apply", tempDir);
         return LibUpdateResult.READY_RESTART;
     }
@@ -266,24 +285,6 @@ public final class LibUpdater {
             throw new IOException("Downloaded manifest is malformed (likely a network/server error)");
         }
         return manifest;
-    }
-
-    /**
-     * Removes everything in {@code tempDir} except the just-downloaded control files
-     * ({@code MANIFEST.MF}, {@code MANIFEST.MF.sig}, {@code lib.zip}), so a reused staging directory
-     * cannot carry stale extracted jars into the next update's allowlist check. Does not follow symlinks.
-     */
-    private static void clearStalePayload(File tempDir) throws IOException {
-        File[] entries = tempDir.listFiles();
-        if (entries == null) {
-            return;
-        }
-        for (File entry : entries) {
-            if (CONTROL_FILES.contains(entry.getName())) {
-                continue;
-            }
-            deleteTree(entry);
-        }
     }
 
     /**
