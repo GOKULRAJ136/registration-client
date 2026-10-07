@@ -20,6 +20,8 @@ func TestParseWaitPID(t *testing.T) {
 		{"non-numeric pid", []string{"--wait-pid", "abc"}, 0, false},
 		{"zero pid", []string{"--wait-pid", "0"}, 0, false},
 		{"negative pid", []string{"--wait-pid", "-5"}, 0, false},
+		{"largest 32-bit pid", []string{"--wait-pid", "4294967295"}, 4294967295, true},
+		{"pid wider than 32 bits", []string{"--wait-pid", "4294967296"}, 0, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

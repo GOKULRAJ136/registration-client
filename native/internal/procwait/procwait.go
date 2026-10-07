@@ -24,11 +24,13 @@ func ParseWaitPID(args []string) (int, bool) {
 		if args[i] != WaitPIDFlag {
 			continue
 		}
-		pid, err := strconv.Atoi(args[i+1])
-		if err != nil || pid <= 0 {
+		// Parse as 32 bits: a Windows PID is a DWORD, and anything wider would
+		// wrap when WaitForExit converts it, so it is rejected like a malformed one.
+		pid, err := strconv.ParseUint(args[i+1], 10, 32)
+		if err != nil || pid == 0 {
 			return 0, false
 		}
-		return pid, true
+		return int(pid), true
 	}
 	return 0, false
 }
