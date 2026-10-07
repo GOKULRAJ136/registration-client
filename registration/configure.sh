@@ -129,8 +129,8 @@ echo ")" >> "${work_dir}"/registration-client/target/run.bat
 cp "${work_dir}"/registration-client/target/run.bat "${work_dir}"/registration-client/target/lib/1201to121_run.bat
 
 ## jar signing
-jarsigner -keystore "${work_dir}"/build_files/keystore.p12 -storepass ${keystore_secret} -tsa ${signer_timestamp_url_env} -digestalg SHA-256 "${work_dir}"/registration-client/target/lib/registration-client-${client_version_env}.jar CodeSigning
-jarsigner -keystore "${work_dir}"/build_files/keystore.p12 -storepass ${keystore_secret} -tsa ${signer_timestamp_url_env} -digestalg SHA-256 "${work_dir}"/registration-client/target/lib/registration-services-${client_version_env}.jar CodeSigning
+KEYSTORE_PASS="${keystore_secret}" jarsigner -keystore "${work_dir}/build_files/keystore.p12" -storepass:env KEYSTORE_PASS -tsa "${signer_timestamp_url_env}" -digestalg SHA-256 "${work_dir}/registration-client/target/lib/registration-client-${client_version_env}.jar" CodeSigning
+KEYSTORE_PASS="${keystore_secret}" jarsigner -keystore "${work_dir}/build_files/keystore.p12" -storepass:env KEYSTORE_PASS -tsa "${signer_timestamp_url_env}" -digestalg SHA-256 "${work_dir}/registration-client/target/lib/registration-services-${client_version_env}.jar" CodeSigning
 
 # ----------------------------------------------------------------------------------------------
 # 1.3.0 dual manifest + detached SHA256withRSA signatures (issue #812).
@@ -187,7 +187,7 @@ cp "${launcher_target}/_launcher.jar" "${lib_dir}/_launcher.jar"
 # to load a package whose classes come from differently signed jars: an unsigned launcher fails to load
 # ClientApplication with "signer information does not match". Signed AFTER the jar uf above (updating a
 # signed jar breaks its signature) and before both manifests below, so the signed bytes are hashed.
-jarsigner -keystore "${work_dir}"/build_files/keystore.p12 -storepass ${keystore_secret} -tsa ${signer_timestamp_url_env} -digestalg SHA-256 "${lib_dir}/_launcher.jar" CodeSigning
+KEYSTORE_PASS="${keystore_secret}" jarsigner -keystore "${work_dir}/build_files/keystore.p12" -storepass:env KEYSTORE_PASS -tsa "${signer_timestamp_url_env}" -digestalg SHA-256 "${lib_dir}/_launcher.jar" CodeSigning
 
 # Authenticode-sign migration.exe / rollback.exe so Windows/AV accept them. Signed HERE, before both
 # manifests below, so the SIGNED bytes are what gets hashed. This is OS-level trust only: the launcher's
